@@ -5,42 +5,30 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: 'hsl(var(--background) / <alpha-value>)',
-        foreground: 'hsl(var(--foreground) / <alpha-value>)',
-        card: {
-          DEFAULT: 'hsl(var(--card) / <alpha-value>)',
-          foreground: 'hsl(var(--card-foreground) / <alpha-value>)',
-        },
-        muted: {
-          DEFAULT: 'hsl(var(--muted) / <alpha-value>)',
-          foreground: 'hsl(var(--muted-foreground) / <alpha-value>)',
-        },
-        border: 'hsl(var(--border) / <alpha-value>)',
-        input: 'hsl(var(--input) / <alpha-value>)',
-        ring: 'hsl(var(--ring) / <alpha-value>)',
-        primary: {
-          DEFAULT: 'hsl(var(--primary) / <alpha-value>)',
-          foreground: 'hsl(var(--primary-foreground) / <alpha-value>)',
-        },
-        secondary: {
-          DEFAULT: 'hsl(var(--secondary) / <alpha-value>)',
-          foreground: 'hsl(var(--secondary-foreground) / <alpha-value>)',
-        },
-        accent: {
-          DEFAULT: 'hsl(var(--accent) / <alpha-value>)',
-          foreground: 'hsl(var(--accent-foreground) / <alpha-value>)',
-        },
-        destructive: 'hsl(var(--destructive) / <alpha-value>)',
-        warning: 'hsl(var(--warning) / <alpha-value>)',
+        board: 'hsl(var(--board) / <alpha-value>)',
+        panel: 'hsl(var(--panel) / <alpha-value>)',
+        panel2: 'hsl(var(--panel2) / <alpha-value>)',
+        tile: 'hsl(var(--tile) / <alpha-value>)',
+        ink: 'hsl(var(--ink) / <alpha-value>)',
+        mute: 'hsl(var(--mute) / <alpha-value>)',
+        line: 'hsl(var(--line) / <alpha-value>)',
+        amber: 'hsl(var(--amber) / <alpha-value>)',
+        led: 'hsl(var(--led) / <alpha-value>)',
+        ok: 'hsl(var(--ok) / <alpha-value>)',
+        danger: 'hsl(var(--danger) / <alpha-value>)',
         info: 'hsl(var(--info) / <alpha-value>)',
       },
       fontFamily: {
-        sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
-        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'Liberation Mono', 'monospace'],
+        display: ['Oswald', 'Arial Narrow', 'ui-sans-serif', 'sans-serif'],
+        mono: ['IBM Plex Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       boxShadow: {
-        soft: '0 1px 2px 0 rgb(0 0 0 / 0.04), 0 8px 24px -12px rgb(0 0 0 / 0.12)',
-        glow: '0 0 0 1px hsl(var(--primary) / 0.25), 0 8px 40px -8px hsl(var(--primary) / 0.35)',
+        key: '0 3px 0 0 hsl(var(--line)), 0 6px 16px -6px rgb(0 0 0 / 0.5)',
+        keypress: '0 1px 0 0 hsl(var(--line)), 0 3px 8px -4px rgb(0 0 0 / 0.5)',
+        panel: '0 1px 0 0 hsl(var(--line) / 0.6), 0 18px 40px -24px rgb(0 0 0 / 0.6)',
+      },
+      letterSpacing: {
+        board: '0.18em',
       },
     },
   },

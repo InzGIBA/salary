@@ -1,6 +1,6 @@
 {
   "name": "salary-countdown",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Шуточный счётчик дней до зарплаты: 10-е число каждого месяца, с учётом выходных и праздников Казахстана",

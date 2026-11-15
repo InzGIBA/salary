@@ -4,14 +4,16 @@ import {
   WEEKDAYS_SHORT, WEEKDAYS_FULL, MONTHS_NOM, MONTHS_GEN,
 } from './holidays.js';
 
-const STORAGE_KEY = 'salary-countdown:v1';
-const DEFAULTS = { name: '', amount: 0, currency: '₸', hour: 10, minute: 0, mode: 'before', theme: 'auto' };
+const SETTINGS_KEY = 'salary-countdown:v1';
+const LOOK_KEY = 'salary-look:v1';
+const DEFAULTS = { name: '', amount: 0, currency: '₸', hour: 10, minute: 0, mode: 'before' };
+const LOOK_DEFAULTS = { theme: 'night', sound: true, ticker: true, grain: true, glow: 60, anim: 'flap' };
 const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 
 const DENIALS = [
   'Нет. Ещё рано. Но попытка засчитана 🫡',
   'Проверил счёт. Там грусть и прошломесячная печаль.',
-  'Банк сказал: «не сегодня». Я передаю дословно.',
+  'Банк сказал: «не сегодня». Передаю дословно.',
   'Бухгалтерия в курсе твоих надежд. Ответ: нет.',
   'Деньги ещё в пути. Как и твоя мотивация.',
   'Отказано. Причина: календарь.',
@@ -40,6 +42,17 @@ const SPEED_TOASTS = [
   'Минфин сообщил: время не ускоряется. Придётся жить.',
 ];
 
+const TICKER_JOKES = [
+  'денег нет, но вы держитесь',
+  'бухгалтерия просит не звонить 9-го числа',
+  'кофе — валюта ожидания',
+  'экватор месяца отмечается молча',
+  'карта проверяется чаще, чем почта',
+  'наурыз переносит рейсы бесплатно',
+  '10-е число — единственный стабильный праздник',
+  'пассажирам зала ожидания приготовиться',
+];
+
 const METRICS = [
   { emoji: '☕', label: 'чашек кофе выпить', value: (a) => Math.max(1, Math.ceil(a.hoursLeft * (16 / 24) / 3)) },
   { emoji: '🍜', label: 'обедов пережить', value: (a) => Math.max(1, Math.ceil(a.hoursLeft * (16 / 24) / 8)) },
@@ -51,12 +64,11 @@ const METRICS = [
   { emoji: '😮‍💨', label: 'тяжёлых вздохов', value: (a) => Math.ceil(a.hoursLeft * 6) },
 ];
 
-function loadSettings() {
+function loadJson(key, fallback) {
   try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    return { ...DEFAULTS, ...raw };
+    return { ...fallback, ...JSON.parse(localStorage.getItem(key) || '{}') };
   } catch {
-    return { ...DEFAULTS };
+    return { ...fallback };
   }
 }
 
@@ -70,9 +82,79 @@ function cap(s) {
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+/* Синтезированный звук табло: только дискретные видимые события */
+const Sound = {
+  ctx: null,
+  enabled: true,
+  unlock() {
+    try {
+      if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+    } catch { /* без звука */ }
+  },
+  tone(freq, dur, type = 'square', gain = 0.04, delay = 0) {
+    if (!this.enabled || !this.ctx || this.ctx.state !== 'running') return;
+    try {
+      const t = this.ctx.currentTime + delay;
+      const o = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      o.type = type;
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(gain, t + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g).connect(this.ctx.destination);
+      o.start(t);
+      o.stop(t + dur + 0.02);
+    } catch { /* без звука */ }
+  },
+  key() { this.tone(320, 0.05, 'square', 0.03); },
+  tick() { this.tone(1200, 0.03, 'square', 0.02); },
+  flap() { this.tone(180, 0.09, 'sawtooth', 0.03); this.tone(90, 0.12, 'sine', 0.04, 0.05); },
+  deny() { this.tone(140, 0.12, 'sawtooth', 0.04); this.tone(110, 0.14, 'sawtooth', 0.035, 0.09); },
+  ching() { [880, 1108.7, 1318.5, 1760].forEach((f, i) => this.tone(f, 0.16, 'sine', 0.05, i * 0.07)); },
+  coin() { [1318.5, 1760].forEach((f, i) => this.tone(f, 0.09, 'square', 0.035, i * 0.08)); },
+};
+
+/* Сплит-флап: четыре половинки на цифру, лопасть откидывается сверху вниз */
+class FlipClock {
+  constructor(root) {
+    this.tiles = [...root.querySelectorAll('.flip')];
+    this.chars = this.tiles.map(() => '0');
+    this.timers = new Map();
+  }
+  update(str) {
+    for (let i = 0; i < this.tiles.length; i++) {
+      const ch = str[i] || '0';
+      if (ch === this.chars[i]) continue;
+      const old = this.chars[i];
+      this.chars[i] = ch;
+      this.flip(this.tiles[i], old, ch);
+    }
+  }
+  flip(tile, oldCh, newCh) {
+    const top = tile.querySelector('.flip-top > span');
+    const bottom = tile.querySelector('.flip-bottom > span');
+    const flapTop = tile.querySelector('.flip-flap-top > span');
+    const flapBottom = tile.querySelector('.flip-flap-bottom > span');
+    clearTimeout(this.timers.get(tile));
+    tile.classList.remove('flipping');
+    void tile.offsetWidth;
+    top.textContent = newCh;
+    flapTop.textContent = oldCh;
+    flapBottom.textContent = newCh;
+    bottom.textContent = oldCh;
+    tile.classList.add('flipping');
+    this.timers.set(tile, setTimeout(() => {
+      bottom.textContent = newCh;
+      tile.classList.remove('flipping');
+    }, 330));
+  }
+}
+
 function celebrate(big = false) {
   if (reducedMotion || typeof window.confetti !== 'function') return;
-  const colors = ['#16a34a', '#22c55e', '#f59e0b', '#84cc16', '#10b981'];
+  const colors = ['#ffb020', '#22c55e', '#ece9df', '#4cc3ff'];
   const base = { colors, zIndex: 90, ticks: 240, gravity: 0.9, spread: 70 };
   if (!big) {
     window.confetti({ ...base, particleCount: 100, origin: { y: 0.6 } });
@@ -90,21 +172,23 @@ function moneyRain() {
   if (reducedMotion || typeof window.confetti !== 'function') return;
   let shapes;
   try {
-    shapes = ['₸', '💸', '🪙'].map((t) => window.confetti.shapeFromText({ text: t, scalar: 2 }));
+    shapes = ['₸', '💸', ''].map((t) => window.confetti.shapeFromText({ text: t, scalar: 2 }));
   } catch {
     shapes = undefined;
   }
   window.confetti({
     particleCount: 90, spread: 130, origin: { y: 0.3 }, scalar: 1.7, gravity: 0.7,
-    colors: ['#16a34a', '#f59e0b', '#22c55e'], shapes, zIndex: 90, ticks: 300,
+    colors: ['#ffb020', '#22c55e', '#ece9df'], shapes, zIndex: 90, ticks: 300,
   });
 }
 
 window.salaryApp = () => ({
   now: new Date(),
-  settings: loadSettings(),
+  settings: loadJson(SETTINGS_KEY, DEFAULTS),
+  look: loadJson(LOOK_KEY, LOOK_DEFAULTS),
   timeOffset: 0,
   demo: null,
+  clock: null,
   toasts: [],
   toastSeq: 0,
   settingsOpen: false,
@@ -114,16 +198,14 @@ window.salaryApp = () => ({
   viewMonth: new Date().getMonth(),
   wisdom: WISDOM[Math.floor(Math.random() * WISDOM.length)],
   wisdomPop: false,
+  statusPop: false,
   checkCount: 0,
   speedClicks: 0,
   speedLockedUntil: 0,
   logoClicks: 0,
   logoPop: false,
-  heroPop: false,
-  heroShake: false,
   stats: [0, 1, 3, 5],
   statPop: [false, false, false, false],
-  themeRev: 0,
   celebratedKey: null,
 
   init() {
@@ -132,10 +214,12 @@ window.salaryApp = () => ({
       const d = new Date(p);
       if (!isNaN(d)) this.timeOffset = d.getTime() - Date.now();
     }
-    this.applyTheme();
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-      if (this.settings.theme === 'auto') this.applyTheme();
-    });
+    this.applyLook();
+    this.clock = new FlipClock(document.getElementById('flipclock'));
+    this.clock.update(this.clockString);
+    const unlock = () => Sound.unlock();
+    document.addEventListener('pointerdown', unlock, { once: true });
+    document.addEventListener('keydown', unlock, { once: true });
     this.tick();
     setInterval(() => this.tick(), 250);
   },
@@ -155,11 +239,19 @@ window.salaryApp = () => ({
   },
 
   tick() {
-    const prevDays = this.daysLeft;
+    const prevStr = this.clockString;
+    const prevPhase = this.phase;
     this.now = this.effectiveNow();
-    if (this.daysLeft !== prevDays) {
-      this.heroPop = true;
-      setTimeout(() => (this.heroPop = false), 400);
+    const str = this.clockString;
+    if (str !== prevStr) {
+      if (this.clock) this.clock.update(str);
+      if (str.slice(4, 6) !== prevStr.slice(4, 6)) Sound.tick();
+      if (str.slice(0, 2) !== prevStr.slice(0, 2)) Sound.flap();
+    }
+    if (this.phase !== prevPhase) {
+      this.statusPop = true;
+      setTimeout(() => (this.statusPop = false), 500);
+      Sound.flap();
     }
     if (this.phase === 'paid' && !this.demo) {
       const key = keyOf(this.target.date);
@@ -169,16 +261,18 @@ window.salaryApp = () => ({
           if (!sessionStorage.getItem('salary-celebrated:' + key)) {
             sessionStorage.setItem('salary-celebrated:' + key, '1');
             celebrate(true);
-            this.toast('ЗА-АР-ПЛА-ТА! 🎉 Сегодня можно всё (в пределах суммы).', 'success');
+            Sound.ching();
+            this.toast('РЕЙС ПРИБЫЛ! 🎉 Сегодня можно всё (в пределах суммы).', 'success');
           }
         } catch { /* приватный режим */ }
       }
     }
+    const d = this.precise.d;
     document.title = this.phase === 'paid'
       ? '💸 ЗП пришла!'
       : this.phase === 'today'
         ? '🚀 ЗП сегодня!'
-        : `${this.daysLeft} ${plural(this.daysLeft, 'день', 'дня', 'дней')} до ЗП 💸`;
+        : `${d} ${plural(d, 'день', 'дня', 'дней')} до ЗП 💸`;
   },
 
   // ---- производные ----
@@ -195,43 +289,50 @@ window.salaryApp = () => ({
     const t = this.msLeft;
     return { d: Math.floor(t / 864e5), h: Math.floor(t / 36e5) % 24, m: Math.floor(t / 6e4) % 60, s: Math.floor(t / 1e3) % 60 };
   },
+  get clockString() {
+    const p = this.precise;
+    return pad(p.d) + pad(p.h) + pad(p.m) + pad(p.s);
+  },
+  get localTime() {
+    return `${pad(this.now.getHours())}:${pad(this.now.getMinutes())}:${pad(this.now.getSeconds())}`;
+  },
+  get statusWord() {
+    return { waiting: 'ОЖИДАНИЕ', today: 'ПОСАДКА', paid: 'ПРИБЫЛ' }[this.phase];
+  },
+  get statusTone() { return this.phase === 'waiting' ? 'text-amber' : 'text-ok'; },
+  get statusTagClass() {
+    if (this.phase === 'waiting') return 'border-amber/50 text-amber';
+    return this.phase === 'today' ? 'border-ok/50 text-ok animate-pulse' : 'border-ok/50 text-ok';
+  },
+  get moodLine() {
+    const name = this.settings.name ? this.settings.name + ', ' : '';
+    return name + this.mood;
+  },
+  get mood() {
+    if (this.phase === 'paid') return 'гуляем. бюджет позволяет примерно всё до 10-го';
+    if (this.phase === 'today') return 'деньги уже в пути. держите карту наготове';
+    const d = this.precise.d;
+    if (d <= 2) return 'финишная прямая. дышите ровно';
+    if (d <= 5) return 'уже видно свет в конце тоннеля';
+    if (d <= 9) return 'терпение. только терпение';
+    if (d <= 19) return 'режим экономии на кофе';
+    return 'денег нет, но вы держитесь';
+  },
   get progress() {
     if (this.phase === 'paid') return 1;
     const { prev, target } = this.schedule;
     return Math.min(1, Math.max(0, (this.now - prev.moment) / (target.moment - prev.moment)));
   },
   get progressPct() { return Math.round(this.progress * 100); },
+  get segsOn() { return Math.round(this.progress * 24); },
   get milestone() {
     const p = this.progress;
-    if (this.phase === 'paid') return 'месяц закрыт 🎉';
-    if (p < 0.25) return 'только начали 🐣';
-    if (p < 0.5) return 'четверть позади 🚶';
-    if (p < 0.75) return 'экватор близко ⛰️';
-    if (p < 0.9) return 'последний рывок 🏃';
-    return 'финишная прямая 🏁';
-  },
-  get mood() {
-    if (this.phase === 'paid') return '🤑 Гуляем!';
-    if (this.phase === 'today') return '🚀 Деньги уже в пути';
-    const d = this.daysLeft;
-    if (d <= 2) return '🔥 Финишная прямая';
-    if (d <= 5) return '🌅 Уже видно свет';
-    if (d <= 9) return '⏳ Терпение. Только терпение';
-    if (d <= 19) return '☕ Режим экономии';
-    return '🧘 Денег нет, но вы держитесь';
-  },
-  get greeting() {
-    if (this.phase === 'paid') return 'Можно гулять!';
-    if (this.phase === 'today') return 'Дождались!';
-    return this.settings.name ? `${this.settings.name}, осталось` : 'Осталось';
-  },
-  get heroSub() {
-    if (this.phase === 'today') return `деньги придут в ${this.payTime}`;
-    if (this.phase === 'paid') return `следующая — ${this.fmtDate(this.focus.date)}, через ${this.daysLeft} ${plural(this.daysLeft, 'день', 'дня', 'дней')}`;
-    return `${plural(this.daysLeft, 'день', 'дня', 'дней')} до зарплаты`;
-  },
-  get todayLabel() {
-    return `сегодня: ${WEEKDAYS_SHORT[this.now.getDay()]}, ${this.now.getDate()} ${MONTHS_GEN[this.now.getMonth()]}`;
+    if (this.phase === 'paid') return 'месяц закрыт';
+    if (p < 0.25) return 'только начали';
+    if (p < 0.5) return 'четверть позади';
+    if (p < 0.75) return 'экватор близко';
+    if (p < 0.9) return 'последний рывок';
+    return 'финишная прямая';
   },
   get paydayFull() {
     const d = this.target.date;
@@ -243,7 +344,7 @@ window.salaryApp = () => ({
     const reason = this.target.reason;
     const pretty = reason.charAt(0).toLowerCase() + reason.slice(1);
     const how = this.settings.mode === 'before' ? 'накануне' : 'в ближайший рабочий день';
-    return `10-е — ${pretty} → платят ${how}: ${this.fmtDate(this.target.date)}`;
+    return `ПЕРЕНОС РЕЙСА: 10-е — ${pretty} → вылет ${how}: ${this.fmtDate(this.target.date)}`;
   },
   get workingDaysLeft() { return countWorkingDays(this.now, addDays(this.focus.date, 1)); },
   get earned() { return this.settings.amount > 0 ? this.settings.amount * this.progress : 0; },
@@ -256,15 +357,20 @@ window.salaryApp = () => ({
     const y = this.now.getFullYear();
     return [{ year: y, list: getYearHolidays(y) }, { year: y + 1, list: getYearHolidays(y + 1) }];
   },
-  get isDark() {
-    void this.themeRev;
-    return document.documentElement.classList.contains('dark');
+  get tickerText() {
+    const next = this.upcoming[0];
+    const facts = [
+      `до рейса ZP-${pad(this.target.date.getMonth() + 1)}: ${this.precise.d} ${plural(this.precise.d, 'день', 'дня', 'дней')}`,
+      next ? `ближайшая задержка: ${next.name} — ${this.fmtDate(next.date)}` : 'праздников впереди нет',
+      `перенос рейсов: ${this.settings.mode === 'before' ? 'накануне выходного' : 'ближайший рабочий день'}`,
+    ];
+    return [...facts, ...TICKER_JOKES].join('  ✦  ');
   },
-  get checkLabel() { return this.phase === 'paid' ? '🎉 ДА! Пришла!' : '💸 ЗП уже пришла?'; },
+  get checkLabel() { return this.phase === 'paid' ? '🎉 да! пришла!' : '💳 проверить карту'; },
   get speedLocked() { return Date.now() < this.speedLockedUntil; },
   get speedLabel() {
     if (this.speedLocked) return `🚫 разблокировка через ${Math.ceil((this.speedLockedUntil - Date.now()) / 1000)}с`;
-    return '⏩ Ускорить время';
+    return '⏩ ускорить время';
   },
   get demoSecondsLeft() {
     return this.demo ? Math.max(0, Math.ceil((12000 - (Date.now() - this.demo.start)) / 1000)) : 0;
@@ -311,12 +417,12 @@ window.salaryApp = () => ({
   // ---- календарь ----
   dayClasses(cell) {
     let c = '';
-    if (cell.isPayday) c += ' bg-primary text-primary-foreground font-bold shadow-glow hover:bg-primary';
-    else if (cell.isPrevPay) c += ' border border-primary/40 text-primary font-semibold';
+    if (cell.isPayday) c += ' bg-amber text-board font-bold';
+    else if (cell.isPrevPay) c += ' border border-amber/50 text-amber font-semibold';
     if (cell.isToday && !cell.isPayday) c += ' ring-2 ring-info font-bold';
-    if (!cell.isPayday && cell.info.holiday) c += ' text-warning font-semibold holiday-dot';
-    else if (!cell.isPayday && cell.info.weekend) c += ' text-destructive/80';
-    if (cell.isPast && !cell.isToday && !cell.isPayday) c += ' opacity-45';
+    if (!cell.isPayday && cell.info.holiday) c += ' text-amber font-semibold holiday-dot';
+    else if (!cell.isPayday && cell.info.weekend) c += ' text-danger/80';
+    if (cell.isPast && !cell.isToday && !cell.isPayday) c += ' opacity-40';
     return c;
   },
   dayTitle(cell) {
@@ -335,19 +441,23 @@ window.salaryApp = () => ({
     else msg += ', рабочий день';
     if (cell.isPayday) msg += '. 💸 Это день ЗП!';
     else if (d > 0) msg += `. До ЗП ещё ${d} ${plural(d, 'день', 'дня', 'дней')}`;
+    Sound.key();
     this.toast(msg, 'info');
   },
   prevMonth() {
     this.viewMonth--;
     if (this.viewMonth < 0) { this.viewMonth = 11; this.viewYear--; }
+    Sound.key();
   },
   nextMonth() {
     this.viewMonth++;
     if (this.viewMonth > 11) { this.viewMonth = 0; this.viewYear++; }
+    Sound.key();
   },
   goToday() {
     this.viewYear = this.now.getFullYear();
     this.viewMonth = this.now.getMonth();
+    Sound.key();
   },
 
   // ---- действия ----
@@ -363,16 +473,17 @@ window.salaryApp = () => ({
   checkSalary() {
     if (this.phase === 'paid') {
       celebrate(true);
+      Sound.ching();
       this.toast('ДА! 💸 Проверяй карту и ни в чём себе не отказывай (до 10-го).', 'success');
       return;
     }
     if (this.phase === 'today') {
+      Sound.key();
       this.toast(`Почти! Зачисление в ${this.payTime} — осталось ${this.precise.h} ч ${this.precise.m} м ⏳`, 'warning');
       return;
     }
     this.checkCount++;
-    this.heroShake = true;
-    setTimeout(() => (this.heroShake = false), 450);
+    Sound.deny();
     if (this.checkCount % 5 === 0) {
       this.toast(`Ты проверил уже ${this.checkCount} раз. ЗП от этого не ускорится 🙃`, 'warning');
     } else {
@@ -385,8 +496,10 @@ window.salaryApp = () => ({
     if (this.speedClicks >= 3) {
       this.speedClicks = 0;
       this.speedLockedUntil = Date.now() + 10000;
+      Sound.deny();
       this.toast('HR заблокировал кнопку за подозрительную активность 🚫 (10 секунд)', 'warning');
     } else {
+      Sound.key();
       this.toast(SPEED_TOASTS[(this.speedClicks - 1) % SPEED_TOASTS.length], 'info');
     }
   },
@@ -395,21 +508,26 @@ window.salaryApp = () => ({
     while (next === this.wisdom) next = WISDOM[Math.floor(Math.random() * WISDOM.length)];
     this.wisdom = next;
     this.wisdomPop = true;
-    setTimeout(() => (this.wisdomPop = false), 350);
+    setTimeout(() => (this.wisdomPop = false), 450);
+    Sound.flap();
   },
   cycleStat(i) {
     this.stats[i] = (this.stats[i] + 1) % METRICS.length;
     this.statPop[i] = true;
-    setTimeout(() => (this.statPop[i] = false), 350);
+    setTimeout(() => (this.statPop[i] = false), 450);
+    Sound.tick();
   },
   logoClick() {
     this.logoClicks++;
     this.logoPop = true;
-    setTimeout(() => (this.logoPop = false), 350);
+    setTimeout(() => (this.logoPop = false), 450);
     if (this.logoClicks >= 5) {
       this.logoClicks = 0;
       moneyRain();
+      Sound.coin();
       this.toast('Пасхалка! 🎉 Денег больше не стало, но настроение — да.', 'success');
+    } else {
+      Sound.key();
     }
   },
   startDemo() {
@@ -420,13 +538,15 @@ window.salaryApp = () => ({
     }
     this.demo = { start: Date.now(), base: this.target.moment.getTime() + 60000 };
     celebrate(true);
+    Sound.ching();
     this.toast('Демо-режим: так выглядит день ЗП 🎬 (12 секунд)', 'success');
   },
   async share() {
     const url = location.href.split('?')[0];
     const text = this.phase === 'paid'
       ? `ЗП пришла! 🤑 Я гуляю. А ты сколько ещё ждёшь? ${url}`
-      : `До зарплаты осталось ${this.daysLeft} ${plural(this.daysLeft, 'день', 'дня', 'дней')} 😮‍💨 Держусь. А ты? ${url}`;
+      : `До зарплаты осталось ${this.precise.d} ${plural(this.precise.d, 'день', 'дня', 'дней')} 😮‍💨 Держусь. А ты? ${url}`;
+    Sound.key();
     try {
       await navigator.clipboard.writeText(text);
       this.toast('Скопировано! Отправь тому, кто тоже ждёт 📋', 'success');
@@ -447,11 +567,45 @@ window.salaryApp = () => ({
     }
   },
 
-  // ---- настройки и тема ----
+  // ---- пульт табло ----
+  applyLook() {
+    document.documentElement.classList.toggle('dark', this.look.theme === 'night');
+    document.body.classList.toggle('no-grain', !this.look.grain);
+    document.documentElement.style.setProperty('--glow', String(this.look.glow / 100));
+    Sound.enabled = this.look.sound;
+  },
+  persistLook() {
+    try { localStorage.setItem(LOOK_KEY, JSON.stringify(this.look)); } catch { /* приватный режим */ }
+  },
+  toggleTheme() {
+    this.look.theme = this.look.theme === 'night' ? 'day' : 'night';
+    this.applyLook();
+    this.persistLook();
+    Sound.key();
+  },
+  toggleSound() {
+    this.look.sound = !this.look.sound;
+    Sound.enabled = this.look.sound;
+    if (this.look.sound) {
+      Sound.unlock();
+      Sound.key();
+    }
+    this.persistLook();
+  },
+  resetLook() {
+    this.look = { ...LOOK_DEFAULTS };
+    this.applyLook();
+    this.persistLook();
+    Sound.key();
+    this.toast('Пульт сброшен к заводским настройкам.', 'info');
+  },
+
+  // ---- личные настройки ----
   openSettings() {
     this.draft = { ...this.settings, time: `${pad(this.settings.hour)}:${pad(this.settings.minute)}` };
     this.settingsOpen = true;
     document.body.style.overflow = 'hidden';
+    Sound.key();
     this.$nextTick(() => document.getElementById('s-name')?.focus());
   },
   closeSettings() {
@@ -468,11 +622,10 @@ window.salaryApp = () => ({
       hour: Number.isFinite(h) ? Math.min(23, Math.max(0, h)) : 10,
       minute: Number.isFinite(m) ? Math.min(59, Math.max(0, m)) : 0,
       mode: this.draft.mode === 'nearest' ? 'nearest' : 'before',
-      theme: ['auto', 'light', 'dark'].includes(this.draft.theme) ? this.draft.theme : 'auto',
     };
     this.persist();
-    this.applyTheme();
     this.closeSettings();
+    Sound.key();
     this.toast('Настройки сохранены ✓', 'success');
   },
   resetDraft() {
@@ -480,17 +633,6 @@ window.salaryApp = () => ({
     this.toast('Значения сброшены. Не забудь сохранить.', 'info');
   },
   persist() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(this.settings)); } catch { /* приватный режим */ }
-  },
-  applyTheme() {
-    const t = this.settings.theme;
-    const dark = t === 'dark' || (t === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    document.documentElement.classList.toggle('dark', dark);
-    this.themeRev++;
-  },
-  toggleTheme() {
-    this.settings.theme = this.isDark ? 'light' : 'dark';
-    this.persist();
-    this.applyTheme();
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.settings)); } catch { /* приватный режим */ }
   },
 });
