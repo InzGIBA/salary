@@ -1,0 +1,165 @@
+/* Кастомные стили поверх Tailwind: анимации, фон, скроллбары */
+
+[x-cloak] {
+  display: none !important;
+}
+
+/* Фон: мягкое денежное свечение */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 32rem at 50% -8rem, hsl(var(--primary) / 0.09), transparent 65%),
+    radial-gradient(40rem 24rem at 100% 110%, hsl(var(--warning) / 0.05), transparent 60%),
+    radial-gradient(36rem 22rem at -10% 100%, hsl(var(--info) / 0.05), transparent 60%);
+}
+
+.dark body::before {
+  background:
+    radial-gradient(60rem 32rem at 50% -8rem, hsl(var(--primary) / 0.13), transparent 65%),
+    radial-gradient(40rem 24rem at 100% 110%, hsl(var(--warning) / 0.06), transparent 60%),
+    radial-gradient(36rem 22rem at -10% 100%, hsl(var(--info) / 0.07), transparent 60%);
+}
+
+/* Градиентная полоска сверху */
+.topline {
+  height: 3px;
+  background: linear-gradient(90deg, hsl(142 71% 36%), hsl(160 84% 39%), hsl(38 92% 50%), hsl(142 71% 36%));
+  background-size: 300% 100%;
+  animation: topline-flow 12s linear infinite;
+}
+
+@keyframes topline-flow {
+  to { background-position: 300% 0; }
+}
+
+/* Появление карточек */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-up {
+  animation: fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Пульс огромной цифры при смене */
+@keyframes pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+.pop {
+  animation: pop 0.35s ease-out;
+}
+
+/* Тряска при отказе «ЗП пришла?» */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-7px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(3px); }
+}
+
+.shake {
+  animation: shake 0.4s ease-in-out;
+}
+
+/* Блеск прогресс-бара */
+@keyframes shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+.progress-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.35), transparent);
+  animation: shimmer 2.4s ease-in-out infinite;
+}
+
+/* Пульс точки «идёт отсчёт» */
+@keyframes ping-soft {
+  0% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.5); }
+  70% { box-shadow: 0 0 0 7px hsl(var(--primary) / 0); }
+  100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0); }
+}
+
+.live-dot {
+  animation: ping-soft 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* Градиентный текст для дня ЗП */
+.money-text {
+  background: linear-gradient(100deg, hsl(142 71% 36%), hsl(160 84% 39%) 45%, hsl(38 92% 45%));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.dark .money-text {
+  background: linear-gradient(100deg, hsl(142 70% 55%), hsl(160 84% 55%) 45%, hsl(38 92% 60%));
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+/* Скроллбары в палитре проекта */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--primary) / 0.35) hsl(var(--muted));
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--muted));
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--primary) / 0.35);
+  border-radius: 8px;
+  border: 2px solid hsl(var(--muted));
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--primary) / 0.6);
+}
+
+/* Табличные цифры для счётчиков */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* Точка праздника в календаре */
+.holiday-dot::after {
+  content: '';
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  height: 4px;
+  width: 4px;
+  border-radius: 9999px;
+  background: hsl(var(--warning));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  html { scroll-behavior: auto; }
+}

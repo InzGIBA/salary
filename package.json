@@ -1,0 +1,15 @@
+{
+  "name": "salary-countdown",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Шуточный счётчик дней до зарплаты: 10-е число каждого месяца, с учётом выходных и праздников Казахстана",
+  "scripts": {
+    "build": "tailwindcss -i ./tailwind/input.css -o ./assets/css/tailwind.css --minify",
+    "dev": "tailwindcss -i ./tailwind/input.css -o ./assets/css/tailwind.css --watch",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}
