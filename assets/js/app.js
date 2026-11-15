@@ -3,12 +3,19 @@ import {
   daysBetween, addDays, sameDay, startOfDay, keyOf, plural,
   WEEKDAYS_SHORT, WEEKDAYS_FULL, MONTHS_NOM, MONTHS_GEN,
 } from './holidays.js';
+import { parseQuery, buildKioskUrl } from './params.js';
 
 const SETTINGS_KEY = 'salary-countdown:v1';
 const LOOK_KEY = 'salary-look:v1';
 const DEFAULTS = { name: '', amount: 0, currency: '₸', hour: 10, minute: 0, mode: 'before' };
 const LOOK_DEFAULTS = { theme: 'night', sound: true, ticker: true, grain: true, glow: 60, anim: 'flap' };
 const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+
+// Параметры ссылки важнее localStorage: телевизор настраивается одной ссылкой.
+const QUERY = parseQuery(location.search, {
+  settings: loadJson(SETTINGS_KEY, DEFAULTS),
+  look: loadJson(LOOK_KEY, LOOK_DEFAULTS),
+});
 
 const DENIALS = [
   'Нет. Ещё рано. Но попытка засчитана 🫡',
@@ -182,13 +189,37 @@ function moneyRain() {
   });
 }
 
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    ta.remove();
+    return ok;
+  }
+}
+
 window.salaryApp = () => ({
   now: new Date(),
-  settings: loadJson(SETTINGS_KEY, DEFAULTS),
-  look: loadJson(LOOK_KEY, LOOK_DEFAULTS),
-  timeOffset: 0,
+  kiosk: QUERY.kiosk,
+  scale: QUERY.scale,
+  settings: QUERY.settings,
+  look: QUERY.look,
+  timeOffset: QUERY.timeOffset,
   demo: null,
   clock: null,
+  wakeLock: null,
+  idleTimer: null,
+  kioskMetric: 0,
+  kioskMetricPop: false,
   toasts: [],
   toastSeq: 0,
   settingsOpen: false,
@@ -209,19 +240,37 @@ window.salaryApp = () => ({
   celebratedKey: null,
 
   init() {
-    const p = new URLSearchParams(location.search).get('now');
-    if (p) {
-      const d = new Date(p);
-      if (!isNaN(d)) this.timeOffset = d.getTime() - Date.now();
-    }
     this.applyLook();
-    this.clock = new FlipClock(document.getElementById('flipclock'));
-    this.clock.update(this.clockString);
-    const unlock = () => Sound.unlock();
-    document.addEventListener('pointerdown', unlock, { once: true });
-    document.addEventListener('keydown', unlock, { once: true });
+    if (!this.kiosk) {
+      const unlock = () => Sound.unlock();
+      document.addEventListener('pointerdown', unlock, { once: true });
+      document.addEventListener('keydown', unlock, { once: true });
+    }
     this.tick();
     setInterval(() => this.tick(), 250);
+    if (this.kiosk) this.initKiosk();
+  },
+
+  // Счётчик живёт в двух разных разметках: обычная страница и киоск.
+  bindClock(el) {
+    this.clock = new FlipClock(el);
+    this.clock.update(this.clockString);
+  },
+
+  initKiosk() {
+    this.requestWakeLock();
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) this.requestWakeLock();
+    });
+    const wake = () => {
+      document.documentElement.classList.remove('idle');
+      clearTimeout(this.idleTimer);
+      this.idleTimer = setTimeout(() => document.documentElement.classList.add('idle'), 3000);
+    };
+    document.addEventListener('pointermove', wake);
+    wake();
+    setInterval(() => this.newWisdom(), 15000);
+    if (!(this.settings.amount > 0)) setInterval(() => this.cycleKioskMetric(), 9000);
   },
 
   // ---- время ----
@@ -360,7 +409,7 @@ window.salaryApp = () => ({
   get tickerText() {
     const next = this.upcoming[0];
     const facts = [
-      `до рейса ZP-${pad(this.target.date.getMonth() + 1)}: ${this.precise.d} ${plural(this.precise.d, 'день', 'дня', 'дней')}`,
+      `до рейса ZP-${pad(this.focus.date.getMonth() + 1)}: ${this.precise.d} ${plural(this.precise.d, 'день', 'дня', 'дней')}`,
       next ? `ближайшая задержка: ${next.name} — ${this.fmtDate(next.date)}` : 'праздников впереди нет',
       `перенос рейсов: ${this.settings.mode === 'before' ? 'накануне выходного' : 'ближайший рабочий день'}`,
     ];
@@ -394,6 +443,39 @@ window.salaryApp = () => ({
       });
     }
     return cells;
+  },
+
+  // ---- киоск ----
+  get flightCode() { return 'ZP-' + pad(this.target.date.getMonth() + 1); },
+  get kioskToday() {
+    const d = this.now;
+    return `${cap(WEEKDAYS_FULL[d.getDay()])}, ${d.getDate()} ${MONTHS_GEN[d.getMonth()]}`;
+  },
+  get kioskPayDate() {
+    const d = this.target.date;
+    return `${d.getDate()} ${MONTHS_GEN[d.getMonth()]} · ${WEEKDAYS_SHORT[d.getDay()]}`;
+  },
+  get heroLabel() {
+    if (this.phase === 'paid') return 'рейс прибыл · до следующего зачисления';
+    if (this.phase === 'today') return `посадка · зачисление сегодня в ${this.payTime}`;
+    return `до зачисления · рейс ${this.flightCode}`;
+  },
+  get daysLabel() {
+    const d = this.precise.d;
+    return `${d} ${plural(d, 'день', 'дня', 'дней')} до рейса`;
+  },
+  get nextHoliday() { return this.upcoming[0] || null; },
+  get kioskShiftNote() {
+    return this.target.shifted
+      ? `перенос рейса: 10-е → ${this.fmtDate(this.target.date)}`
+      : 'вылет по расписанию · 10-е число';
+  },
+  get kioskUrl() {
+    return buildKioskUrl(
+      location.href, this.settings, this.look,
+      { settings: DEFAULTS, look: LOOK_DEFAULTS },
+      { now: QUERY.nowParam, scale: QUERY.scale },
+    );
   },
 
   // ---- форматирование ----
@@ -547,24 +629,11 @@ window.salaryApp = () => ({
       ? `ЗП пришла! 🤑 Я гуляю. А ты сколько ещё ждёшь? ${url}`
       : `До зарплаты осталось ${this.precise.d} ${plural(this.precise.d, 'день', 'дня', 'дней')} 😮‍💨 Держусь. А ты? ${url}`;
     Sound.key();
-    try {
-      await navigator.clipboard.writeText(text);
-      this.toast('Скопировано! Отправь тому, кто тоже ждёт 📋', 'success');
-    } catch {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand('copy');
-        this.toast('Скопировано! Отправь тому, кто тоже ждёт 📋', 'success');
-      } catch {
-        this.toast('Не удалось скопировать. Но ты держись 😢', 'warning');
-      }
-      ta.remove();
-    }
+    const ok = await copyText(text);
+    this.toast(
+      ok ? 'Скопировано! Отправь тому, кто тоже ждёт 📋' : 'Не удалось скопировать. Но ты держись 😢',
+      ok ? 'success' : 'warning',
+    );
   },
 
   // ---- пульт табло ----
@@ -572,7 +641,7 @@ window.salaryApp = () => ({
     document.documentElement.classList.toggle('dark', this.look.theme === 'night');
     document.body.classList.toggle('no-grain', !this.look.grain);
     document.documentElement.style.setProperty('--glow', String(this.look.glow / 100));
-    Sound.enabled = this.look.sound;
+    Sound.enabled = this.look.sound && !this.kiosk;
   },
   persistLook() {
     try { localStorage.setItem(LOOK_KEY, JSON.stringify(this.look)); } catch { /* приватный режим */ }
@@ -598,6 +667,40 @@ window.salaryApp = () => ({
     this.persistLook();
     Sound.key();
     this.toast('Пульт сброшен к заводским настройкам.', 'info');
+  },
+
+  // ---- киоск ----
+  openKiosk() {
+    Sound.key();
+    window.open(this.kioskUrl, '_blank', 'noopener');
+  },
+  async copyKioskUrl() {
+    Sound.key();
+    const ok = await copyText(this.kioskUrl);
+    this.toast(
+      ok ? 'Ссылка скопирована 📋 Открой её на телевизоре и нажми F.' : 'Не удалось скопировать ссылку 😢',
+      ok ? 'success' : 'warning',
+    );
+  },
+  cycleKioskMetric() {
+    this.kioskMetric = (this.kioskMetric + 1) % METRICS.length;
+    this.kioskMetricPop = true;
+    setTimeout(() => (this.kioskMetricPop = false), 450);
+  },
+  toggleFullscreen() {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+      return;
+    }
+    const el = document.documentElement;
+    if (el.requestFullscreen) el.requestFullscreen().catch(() => { /* браузер телевизора отказал */ });
+  },
+  async requestWakeLock() {
+    if (!('wakeLock' in navigator) || this.wakeLock) return;
+    try {
+      this.wakeLock = await navigator.wakeLock.request('screen');
+      this.wakeLock.addEventListener('release', () => { this.wakeLock = null; });
+    } catch { /* телевизор сам решает, гасить ли экран */ }
   },
 
   // ---- личные настройки ----
