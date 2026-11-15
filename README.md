@@ -1,5 +1,8 @@
 # до зарплаты 💸
 
+[![CI](https://github.com/InzGIBA/salary/actions/workflows/ci.yml/badge.svg)](https://github.com/InzGIBA/salary/actions/workflows/ci.yml)
+[![Pages](https://github.com/InzGIBA/salary/actions/workflows/pages.yml/badge.svg)](https://github.com/InzGIBA/salary/actions/workflows/pages.yml)
+
 Шуточная страница-счётчик: сколько дней осталось до зарплаты. Минимализм в духе shadcn/ui, Alpine.js, без сборки на стороне сервера — чистая статика, готовая к GitHub Pages.
 
 ## Правила расчёта
